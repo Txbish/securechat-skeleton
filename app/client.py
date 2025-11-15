@@ -408,14 +408,75 @@ class SecureClient:
             logger.error(f"Login error: {e}")
             return False
     
+    def _process_encrypted_message(self, msg: protocol.EncryptedMessage) -> bool:
+        """
+        Process an encrypted message from server with signature verification.
+        
+        Protocol:
+        1. Check seqno is strictly increasing (replay protection)
+        2. Verify RSA signature over SHA256(seqno||ts||ct)
+        3. Decrypt ciphertext using session key
+        4. Remove PKCS#7 padding
+        5. Display plaintext
+        
+        Args:
+            msg: EncryptedMessage to process
+            
+        Returns:
+            True if successful, False if replay/verification failed
+        """
+        try:
+            # Step 1: Replay protection - check strictly increasing seqno
+            if msg.seqno <= self.expected_server_seqno:
+                logger.warning(f"REPLAY: seqno={msg.seqno}, expected>{self.expected_server_seqno}")
+                return False
+            
+            self.expected_server_seqno = msg.seqno
+            
+            # Step 2: Signature verification
+            # Load server certificate from initial hello exchange
+            from app.crypto import pki as pki_module
+            
+            # Reconstruct the data that was signed: seqno||ts||ct
+            signed_data = f"{msg.seqno}||{msg.ts}||{msg.ct}".encode('utf-8')
+            sig_bytes = utils.b64d(msg.sig)
+            
+            # We need server's certificate - load from file if available
+            try:
+                with open('certs/server_cert.pem', 'r') as f:
+                    server_cert_pem = f.read()
+            except FileNotFoundError:
+                logger.error("Server certificate not found")
+                return False
+            
+            if not sign.rsa_verify(server_cert_pem, signed_data, sig_bytes):
+                logger.warning(f"SIG_FAIL: Signature verification failed for seqno={msg.seqno}")
+                return False
+            
+            logger.info(f"Signature verified for seqno={msg.seqno}")
+            
+            # Step 3: Decrypt ciphertext
+            ct_bytes = utils.b64d(msg.ct)
+            plaintext_bytes = aes.aes_decrypt(self.session_key, ct_bytes)
+            
+            # Step 4: Remove PKCS#7 padding and display
+            plaintext = plaintext_bytes.decode('utf-8')
+            logger.info(f"<<< [From Server] seqno={msg.seqno}: {plaintext}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error processing server message: {e}")
+            return False
+    
     def interactive_chat(self):
         """
         Interactive chat mode after authentication.
         
         Allows user to:
-        - Send messages (will be encrypted in Task 11)
-        - Receive messages
-        - Type 'quit' to exit
+        - Send encrypted, signed messages
+        - Receive and verify signed messages
+        - Type 'quit' to exit and request session receipt
         """
         if not self.is_authenticated:
             logger.error("Not authenticated")
@@ -435,11 +496,15 @@ class SecureClient:
                     break
                 
                 if isinstance(msg, protocol.EncryptedMessage):
-                    logger.info(f"[Message] seqno={msg.seqno}: (encrypted)")
+                    # Verify and decrypt server message
+                    self._process_encrypted_message(msg)
                 elif isinstance(msg, protocol.ErrorMessage):
                     logger.error(f"[Error] {msg.code}: {msg.message}")
                 elif isinstance(msg, protocol.SessionReceipt):
-                    logger.info(f"[Receipt] Transcript hash: {msg.transcript_sha256}")
+                    logger.info(f"[Receipt from server]")
+                    logger.info(f"  Messages: {msg.first_seq}-{msg.last_seq}")
+                    logger.info(f"  Transcript hash: {msg.transcript_sha256}")
+                    logger.info(f"  Signature (b64): {msg.sig[:32]}...")
                 else:
                     logger.info(f"[{msg.type}] {msg}")
         
@@ -451,13 +516,13 @@ class SecureClient:
                 msg_text = input("\nMessage (or 'quit'): ").strip()
                 
                 if msg_text.lower() == 'quit':
-                    logger.info("Exiting chat")
+                    logger.info("Exiting chat, requesting session receipt")
                     # Send receipt request (implementation in Task 12)
                     receipt_req = protocol.SessionReceipt(
-                        peer='server',
+                        peer='client',
                         first_seq=1,
-                        last_seq=self.seqno - 1,
-                        transcript_sha256='',  # Will be computed in Task 12
+                        last_seq=self.seqno,
+                        transcript_sha256='',  # Will be computed server-side
                         sig=''
                     )
                     self.send_message(receipt_req)
@@ -466,18 +531,33 @@ class SecureClient:
                 if not msg_text:
                     continue
                 
-                # Create and send encrypted message (full signing in Task 11)
-                self.seqno += 1
+                # Encrypt plaintext message
+                plaintext_bytes = msg_text.encode('utf-8')
+                ct_bytes = aes.aes_encrypt(self.session_key, plaintext_bytes)
+                ct_b64 = utils.b64e(ct_bytes)
+                
+                # Sign the message: RSA_SIGN(SHA256(seqno||ts||ct))
+                ts = utils.now_ms()
+                signed_data = f"{self.seqno}||{ts}||{ct_b64}".encode('utf-8')
+                
+                with open(CLIENT_KEY_PATH, 'r') as f:
+                    client_key_pem = f.read()
+                
+                from app.crypto import sign
+                sig_bytes = sign.rsa_sign(client_key_pem, signed_data)
+                sig_b64 = utils.b64e(sig_bytes)
+                
+                # Create and send signed encrypted message
                 encrypted_msg = protocol.EncryptedMessage(
                     seqno=self.seqno,
-                    ts=utils.now_ms(),
-                    ct=utils.b64e(aes.aes_encrypt(
-                        self.session_key,
-                        msg_text.encode('utf-8')
-                    )),
-                    sig=''  # Will be signed in Task 11
+                    ts=ts,
+                    ct=ct_b64,
+                    sig=sig_b64
                 )
+                
+                logger.info(f">>> [To Server] seqno={self.seqno}: {msg_text}")
                 self.send_message(encrypted_msg)
+                self.seqno += 1
                 
         except KeyboardInterrupt:
             logger.info("Chat interrupted")
