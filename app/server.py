@@ -451,11 +451,11 @@ class ClientSession:
         """
         try:
             # Step 1: Replay protection - check strictly increasing seqno
-            if msg.seqno <= self.expected_seqno:
-                logger.warning(f"[{self.session_id}] Replay detected: seqno={msg.seqno}, expected>{self.expected_seqno}")
+            if msg.seqno < self.expected_seqno:
+                logger.warning(f"[{self.session_id}] Replay detected: seqno={msg.seqno}, expected>={self.expected_seqno}")
                 return "REPLAY"
             
-            self.expected_seqno = msg.seqno
+            self.expected_seqno = msg.seqno + 1
             
             # Step 2: Signature verification
             # Reconstruct the data that was signed: seqno||ts||ct

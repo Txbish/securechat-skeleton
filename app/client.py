@@ -431,11 +431,11 @@ class SecureClient:
         """
         try:
             # Step 1: Replay protection - check strictly increasing seqno
-            if msg.seqno <= self.expected_server_seqno:
-                logger.warning(f"REPLAY: seqno={msg.seqno}, expected>{self.expected_server_seqno}")
+            if msg.seqno < self.expected_server_seqno:
+                logger.warning(f"REPLAY: seqno={msg.seqno}, expected>={self.expected_server_seqno}")
                 return False
             
-            self.expected_server_seqno = msg.seqno
+            self.expected_server_seqno = msg.seqno + 1
             
             # Step 2: Signature verification
             # Load server certificate from initial hello exchange
