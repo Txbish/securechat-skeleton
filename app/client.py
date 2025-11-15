@@ -492,6 +492,19 @@ class SecureClient:
         self.seqno = 1
         self.expected_server_seqno = 1
         
+        # Initialize local transcript for non-repudiation
+        # Format: seqno|ts|ct|sig|peer_fingerprint (one per line)
+        from pathlib import Path
+        import tempfile
+        transcripts_dir = Path("transcripts")
+        transcripts_dir.mkdir(exist_ok=True)
+        # Client-side transcript: logged messages we send
+        timestamp = utils.now_ms()
+        client_transcript_file = transcripts_dir / f"client_{timestamp}.txt"
+        self.client_transcript = transcript.Transcript(str(client_transcript_file))
+        self.first_seqno = None
+        self.last_seqno = None
+        
         # Start receive thread
         def receive_loop():
             while True:
@@ -520,16 +533,32 @@ class SecureClient:
                 msg_text = input("\nMessage (or 'quit'): ").strip()
                 
                 if msg_text.lower() == 'quit':
-                    logger.info("Exiting chat, requesting session receipt")
-                    # Send receipt request (implementation in Task 12)
-                    receipt_req = protocol.SessionReceipt(
-                        peer='client',
-                        first_seq=1,
-                        last_seq=self.seqno,
-                        transcript_sha256='',  # Will be computed server-side
-                        sig=''
-                    )
-                    self.send_message(receipt_req)
+                    logger.info("Exiting chat, generating and sending client receipt")
+                    
+                    # Generate client receipt if any messages were sent
+                    if self.first_seqno is not None and self.last_seqno is not None:
+                        # Compute transcript hash
+                        transcript_hash_hex = self.client_transcript.compute_hash()
+                        
+                        # Sign with client private key
+                        with open(CLIENT_KEY_PATH, 'r') as f:
+                            client_key_pem = f.read()
+                        
+                        transcript_hash_bytes = bytes.fromhex(transcript_hash_hex)
+                        sig_bytes = sign.rsa_sign(client_key_pem, transcript_hash_bytes)
+                        sig_b64 = utils.b64e(sig_bytes)
+                        
+                        # Send client receipt
+                        client_receipt = protocol.SessionReceipt(
+                            peer='client',
+                            first_seq=self.first_seqno,
+                            last_seq=self.last_seqno,
+                            transcript_sha256=transcript_hash_hex,
+                            sig=sig_b64
+                        )
+                        logger.info(f"Sending client receipt: {self.first_seqno}-{self.last_seqno}")
+                        self.send_message(client_receipt)
+                    
                     break
                 
                 if not msg_text:
@@ -557,6 +586,21 @@ class SecureClient:
                     ts=ts,
                     ct=ct_b64,
                     sig=sig_b64
+                )
+                
+                # Track first and last seqno
+                if self.first_seqno is None:
+                    self.first_seqno = self.seqno
+                self.last_seqno = self.seqno
+                
+                # Log to client transcript for non-repudiation
+                server_cert_fp = utils.sha256_hex(self.server_cert_pem.encode('utf-8'))[:16] if hasattr(self, 'server_cert_pem') else "unknown"
+                self.client_transcript.log_message(
+                    seqno=self.seqno,
+                    timestamp=ts,
+                    ciphertext=ct_b64,
+                    signature=sig_b64,
+                    peer_fingerprint=server_cert_fp
                 )
                 
                 logger.info(f">>> [To Server] seqno={self.seqno}: {msg_text}")
@@ -595,8 +639,8 @@ def main():
         # Get certificate paths
         print("SecureChat Client")
         print("-" * 50)
-        cert_path = input("Certificate path (default: certs/client.crt): ").strip() or "certs/client.crt"
-        key_path = input("Key path (default: certs/client.key): ").strip() or "certs/client.key"
+        cert_path = input("Certificate path (default: certs/client_cert.pem): ").strip() or "certs/client_cert.pem"
+        key_path = input("Key path (default: certs/client_key.pem): ").strip() or "certs/client_key.pem"
         
         # Verify files exist
         if not os.path.exists(cert_path):
