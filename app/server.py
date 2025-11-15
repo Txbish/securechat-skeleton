@@ -531,6 +531,67 @@ class ClientSession:
             logger.error(f"[{self.session_id}] Error generating receipt: {e}")
             return False
     
+    def send_signed_message(self, plaintext: str) -> bool:
+        """
+        Send a signed message to the client.
+        
+        Protocol: Create EncryptedMessage with:
+        - Encrypt plaintext with session_key
+        - Sign with server's RSA private key: RSA_SIGN(SHA256(seqno||ts||ct))
+        - Send to client
+        
+        Args:
+            plaintext: Message text to send
+            
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        try:
+            # Initialize server seqno tracking if needed
+            if not hasattr(self, 'server_seqno'):
+                self.server_seqno = 1
+            
+            # Encrypt message
+            plaintext_bytes = plaintext.encode('utf-8')
+            ct_bytes = aes.aes_encrypt(self.session_key, plaintext_bytes)
+            ct_b64 = utils.b64e(ct_bytes)
+            
+            # Sign the message: RSA_SIGN(SHA256(seqno||ts||ct))
+            ts = utils.now_ms()
+            signed_data = f"{self.server_seqno}||{ts}||{ct_b64}".encode('utf-8')
+            
+            with open(SERVER_KEY_PATH, 'r') as f:
+                server_key_pem = f.read()
+            
+            sig_bytes = sign.rsa_sign(server_key_pem, signed_data)
+            sig_b64 = utils.b64e(sig_bytes)
+            
+            # Create and send message
+            encrypted_msg = protocol.EncryptedMessage(
+                seqno=self.server_seqno,
+                ts=ts,
+                ct=ct_b64,
+                sig=sig_b64
+            )
+            
+            # Log to server's transcript for non-repudiation
+            peer_cert_fp = utils.sha256_hex(self.client_cert_pem.encode('utf-8'))[:16]
+            self.transcript.log_message(
+                seqno=self.server_seqno,
+                timestamp=ts,
+                ciphertext=ct_b64,
+                signature=sig_b64,
+                peer_fingerprint=peer_cert_fp
+            )
+            
+            logger.info(f"[{self.session_id}] >>> [To Client] seqno={self.server_seqno}: {plaintext}")
+            self.server_seqno += 1
+            return self.send_message(encrypted_msg)
+            
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Error sending signed message: {e}")
+            return False
+    
     def handle_client(self):
         """
         Main client connection handler.
