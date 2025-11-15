@@ -3,7 +3,8 @@
 from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from cryptography.x509.oid import NameOID
 
 
@@ -41,12 +42,28 @@ def validate_cert_signature(cert: x509.Certificate, ca_cert: x509.Certificate) -
     """
     try:
         ca_public_key = ca_cert.public_key()
+        
+        # Extract the signature algorithm OID and convert to the correct algorithm
+        if cert.signature_algorithm_oid == x509.oid.SignatureAlgorithmOID.RSA_WITH_SHA256:
+            algorithm = hashes.SHA256()
+        elif cert.signature_algorithm_oid == x509.oid.SignatureAlgorithmOID.RSA_WITH_SHA1:
+            algorithm = hashes.SHA1()
+        elif cert.signature_algorithm_oid == x509.oid.SignatureAlgorithmOID.RSA_WITH_SHA384:
+            algorithm = hashes.SHA384()
+        elif cert.signature_algorithm_oid == x509.oid.SignatureAlgorithmOID.RSA_WITH_SHA512:
+            algorithm = hashes.SHA512()
+        else:
+            raise CertValidationError(f"Unsupported signature algorithm: {cert.signature_algorithm_oid}")
+        
         ca_public_key.verify(
             cert.signature,
             cert.tbs_certificate_bytes,
-            cert.signature_algorithm_oid
+            asym_padding.PKCS1v15(),
+            algorithm
         )
         return True
+    except CertValidationError:
+        raise
     except Exception as e:
         raise CertValidationError(f"Certificate signature verification failed: {e}")
 
@@ -77,6 +94,33 @@ def validate_cert_validity(cert: x509.Certificate) -> bool:
         )
     
     return True
+
+
+def extract_public_key(cert_pem: str) -> str:
+    """
+    Extract public key from certificate in PEM format.
+    
+    Args:
+        cert_pem: certificate in PEM format
+        
+    Returns:
+        Public key in PEM format
+        
+    Raises:
+        CertValidationError if extraction fails
+    """
+    try:
+        cert = load_certificate(cert_pem)
+        public_key = cert.public_key()
+        
+        # Serialize to PEM format
+        pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        return pem.decode('utf-8')
+    except Exception as e:
+        raise CertValidationError(f"Failed to extract public key: {e}")
 
 
 def get_cert_cn(cert: x509.Certificate) -> str:
@@ -120,7 +164,7 @@ def validate_cert_cn(cert: x509.Certificate, expected_cn: str) -> bool:
     return True
 
 
-def validate_certificate(cert_pem: str, ca_cert_pem: str, expected_cn: str = None) -> bool:
+def validate_certificate(cert_pem: str, ca_cert_path_or_pem: str, expected_cn: str = None) -> bool:
     """
     Perform complete certificate validation:
     1. Load certificate
@@ -130,7 +174,7 @@ def validate_certificate(cert_pem: str, ca_cert_pem: str, expected_cn: str = Non
     
     Args:
         cert_pem: certificate in PEM format
-        ca_cert_pem: CA certificate in PEM format
+        ca_cert_path_or_pem: CA certificate as PEM string or file path
         expected_cn: optional expected Common Name
         
     Returns:
@@ -141,7 +185,19 @@ def validate_certificate(cert_pem: str, ca_cert_pem: str, expected_cn: str = Non
     """
     try:
         cert = load_certificate(cert_pem)
-        ca_cert = load_ca_certificate(ca_cert_pem)
+        
+        # Load CA cert - either from file or PEM string
+        if ca_cert_path_or_pem.startswith('-----BEGIN CERTIFICATE-----'):
+            # It's a PEM string
+            ca_cert = load_ca_certificate(ca_cert_path_or_pem)
+        else:
+            # It's a file path
+            try:
+                with open(ca_cert_path_or_pem, 'r') as f:
+                    ca_cert_pem = f.read()
+                ca_cert = load_ca_certificate(ca_cert_pem)
+            except FileNotFoundError:
+                raise CertValidationError(f"CA certificate file not found: {ca_cert_path_or_pem}")
         
         # Verify signature
         validate_cert_signature(cert, ca_cert)
