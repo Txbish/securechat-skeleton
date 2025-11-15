@@ -300,9 +300,12 @@ class SecureClient:
             username = input("Username: ").strip()
             password = input("Password: ").strip()
             
-            # Generate salt and hash password
-            salt = utils.b64e(os.urandom(16))
-            pwd_hash = utils.sha256(f"{password}{salt}".encode('utf-8'))
+            # Generate salt (server will store this and use it for verification)
+            salt_bytes = os.urandom(16)
+            salt = utils.b64e(salt_bytes)
+            # Compute hash: SHA256(salt_bytes + password_bytes)
+            # This matches what server will compute during login verification
+            pwd_hash = utils.sha256_hex(salt_bytes + password.encode('utf-8'))
             
             # Create register message
             reg_msg = protocol.RegisterMessage(
@@ -368,10 +371,11 @@ class SecureClient:
             password = input("Password: ").strip()
             
             # Create login message (salt is stored on server)
+            # Send plaintext password - server will hash it with the stored salt
             login_msg = protocol.LoginMessage(
                 type='login',
                 email=email,
-                pwd=utils.sha256(password.encode('utf-8')),  # Server will verify with stored salt
+                pwd=password,  # Server will compute hash with stored salt
                 nonce=utils.b64e(os.urandom(16))
             )
             

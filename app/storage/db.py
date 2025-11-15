@@ -192,6 +192,10 @@ def verify_login(email: str, password: str = None, pwd_hash: str = None) -> Opti
         
         user_id, username, stored_salt, stored_hash = result
         
+        # Convert stored_salt from memoryview to bytes if needed (PostgreSQL binary column)
+        if isinstance(stored_salt, memoryview):
+            stored_salt = bytes(stored_salt)
+        
         # Compute hash to verify
         if pwd_hash is not None:
             # Direct comparison of pre-hashed password

@@ -390,7 +390,7 @@ class ClientSession:
             try:
                 user_data = db.verify_login(
                     email=login_msg.email,
-                    pwd_hash=login_msg.pwd
+                    password=login_msg.pwd
                 )
                 if not user_data:
                     logger.warning(f"[{self.session_id}] Login failed for {login_msg.email}")

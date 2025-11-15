@@ -32,7 +32,7 @@ class LoginMessage(BaseModel):
     """Login: encrypted email and password hash."""
     type: str = Field(default="login")
     email: str
-    pwd: str  # base64(sha256(salt || password))
+    pwd: str  # plaintext password (server will compute hash with stored salt)
     nonce: str  # base64-encoded random bytes for freshness
 
 
