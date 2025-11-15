@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 SERVER_HOST = '127.0.0.1'
 SERVER_PORT = 5555
 CA_CERT_PATH = 'certs/ca_cert.pem'
+CLIENT_KEY_PATH = 'certs/client_key.pem'
 
 
 class SecureClient:
@@ -421,6 +422,10 @@ class SecureClient:
             return
         
         logger.info("Entering interactive chat mode. Type 'quit' to exit.")
+        
+        # Initialize message sequence number for this session
+        self.seqno = 1
+        self.expected_server_seqno = 1
         
         # Start receive thread
         def receive_loop():
