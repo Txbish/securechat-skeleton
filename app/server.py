@@ -431,6 +431,106 @@ class ClientSession:
             self.send_message(error_msg)
             return False
     
+    def _process_encrypted_message(self, msg: protocol.EncryptedMessage) -> Optional[str]:
+        """
+        Process an encrypted chat message with signature verification.
+        
+        Protocol:
+        1. Check seqno is strictly increasing (replay protection)
+        2. Verify RSA signature over SHA256(seqno||ts||ct)
+        3. Decrypt ciphertext using session key
+        4. Remove PKCS#7 padding
+        5. Log to transcript
+        6. Display plaintext to server console
+        
+        Args:
+            msg: EncryptedMessage to process
+            
+        Returns:
+            Error code if processing failed, None if successful
+        """
+        try:
+            # Step 1: Replay protection - check strictly increasing seqno
+            if msg.seqno <= self.expected_seqno:
+                logger.warning(f"[{self.session_id}] Replay detected: seqno={msg.seqno}, expected>{self.expected_seqno}")
+                return "REPLAY"
+            
+            self.expected_seqno = msg.seqno
+            
+            # Step 2: Signature verification
+            # Reconstruct the data that was signed: seqno||ts||ct
+            signed_data = f"{msg.seqno}||{msg.ts}||{msg.ct}".encode('utf-8')
+            sig_bytes = utils.b64d(msg.sig)
+            
+            if not sign.rsa_verify(self.client_cert_pem, signed_data, sig_bytes):
+                logger.warning(f"[{self.session_id}] Signature verification failed for seqno={msg.seqno}")
+                return "SIG_FAIL"
+            
+            logger.info(f"[{self.session_id}] Signature verified for seqno={msg.seqno}")
+            
+            # Step 3: Decrypt ciphertext
+            ct_bytes = utils.b64d(msg.ct)
+            plaintext_bytes = aes.aes_decrypt(self.session_key, ct_bytes)
+            
+            # Step 4: Remove PKCS#7 padding
+            plaintext = plaintext_bytes.decode('utf-8')
+            logger.info(f"[{self.session_id}] <<< [Client] seqno={msg.seqno}: {plaintext}")
+            
+            # Step 5: Log to transcript (for non-repudiation)
+            peer_cert_fp = utils.sha256_hex(self.client_cert_pem.encode('utf-8'))[:16]
+            self.transcript.log_message(
+                seqno=msg.seqno,
+                timestamp=msg.ts,
+                ciphertext=msg.ct,
+                signature=msg.sig,
+                peer_fingerprint=peer_cert_fp
+            )
+            
+            return None  # Success
+            
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Error processing encrypted message: {e}")
+            return "SERVER_ERROR"
+    
+    def _generate_and_send_receipt(self, first_seqno: int, last_seqno: int) -> bool:
+        """
+        Generate and send session receipt for non-repudiation.
+        
+        Args:
+            first_seqno: First message sequence number
+            last_seqno: Last message sequence number
+            
+        Returns:
+            True if receipt sent successfully, False otherwise
+        """
+        try:
+            # Compute transcript hash
+            transcript_hash_hex = self.transcript.compute_hash()
+            
+            # Sign the transcript hash with server's private key
+            with open(SERVER_KEY_PATH, 'r') as f:
+                server_key_pem = f.read()
+            
+            transcript_hash_bytes = bytes.fromhex(transcript_hash_hex)
+            sig_bytes = sign.rsa_sign(server_key_pem, transcript_hash_bytes)
+            sig_b64 = utils.b64e(sig_bytes)
+            
+            # Create and send receipt
+            receipt = protocol.SessionReceipt(
+                peer="server",
+                first_seq=first_seqno,
+                last_seq=last_seqno,
+                transcript_sha256=transcript_hash_hex,
+                sig=sig_b64
+            )
+            
+            logger.info(f"[{self.session_id}] Sending SessionReceipt: {first_seqno}-{last_seqno}")
+            return self.send_message(receipt)
+            
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Error generating receipt: {e}")
+            return False
+    
     def handle_client(self):
         """
         Main client connection handler.
@@ -542,19 +642,38 @@ class ClientSession:
             
             # Step 5: Message loop
             logger.info(f"[{self.session_id}] Entering message loop for {self.client_email}")
+            first_seqno = None
+            last_seqno = None
+            
             while True:
                 msg = self.recv_message()
                 if msg is None:
                     break
                 
                 if isinstance(msg, protocol.EncryptedMessage):
-                    # Process encrypted message
-                    pass  # TODO: Implement encrypted message handling (Task 11)
+                    # Track message sequence numbers for receipt
+                    if first_seqno is None:
+                        first_seqno = msg.seqno
+                    last_seqno = msg.seqno
+                    
+                    # Process encrypted message with signature verification
+                    error_code = self._process_encrypted_message(msg)
+                    if error_code:
+                        error_msg = protocol.ErrorMessage(
+                            code=error_code,
+                            message=f"Message processing failed: {error_code}"
+                        )
+                        self.send_message(error_msg)
+                        
                 elif isinstance(msg, protocol.SessionReceipt):
                     logger.info(f"[{self.session_id}] Client requesting session receipt")
                     break
                 else:
                     logger.warning(f"[{self.session_id}] Unexpected message type: {msg.type}")
+            
+            # Generate and send session receipt
+            if first_seqno is not None and last_seqno is not None:
+                self._generate_and_send_receipt(first_seqno, last_seqno)
             
             logger.info(f"[{self.session_id}] Session complete for {self.client_email}")
             
