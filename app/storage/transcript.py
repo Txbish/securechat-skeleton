@@ -59,6 +59,19 @@ class Transcript:
         except IOError as e:
             raise IOError(f"Failed to write to transcript: {e}")
     
+    def log_message(self, seqno: int, timestamp: int, ciphertext: str, signature: str, peer_fingerprint: str):
+        """
+        Log a message to transcript (alias for append for consistency).
+        
+        Args:
+            seqno: message sequence number
+            timestamp: message timestamp (ms)
+            ciphertext: ciphertext (base64)
+            signature: signature (base64)
+            peer_fingerprint: peer's cert SHA-256 fingerprint (first 16 chars)
+        """
+        self.append(seqno, timestamp, ciphertext, signature, peer_fingerprint)
+    
     def get_lines(self) -> List[str]:
         """
         Get all transcript lines.
