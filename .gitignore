@@ -64,5 +64,5 @@ IMPLEMENTATION_PROGRESS.md
 *.pdf
 *.txt
 *.env
-unit_test_crypto.py
+# unit_test_crypto.py
 # test_*.py

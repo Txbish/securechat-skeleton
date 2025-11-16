@@ -12,6 +12,7 @@ from .pki import (
     get_cert_cn,
     CertValidationError,
 )
+from .client_cert_gen import generate_client_certificate
 
 __all__ = [
     "aes_encrypt",

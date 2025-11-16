@@ -248,13 +248,63 @@ CA_CERT_PATH = 'certs/ca_cert.pem'
 
 ### Generate New Certificates (Optional)
 
-```bash
-# Generate new Root CA
-python3 scripts/gen_ca.py
+If you need to regenerate certificates, use the provided scripts:
 
-# Generate new server/client certificates
-python3 scripts/gen_cert.py --type server --cn localhost
-python3 scripts/gen_cert.py --type client --cn client
+```bash
+# Step 1: Generate new Root CA (10-year validity)
+python3 scripts/gen_ca.py \
+    --name "FAST-NU Root CA" \
+    --cert certs/ca_cert.pem \
+    --key certs/ca_key.pem \
+    --days 3650
+
+# Step 2: Generate new server certificate (signed by CA)
+python3 scripts/gen_cert.py \
+    --ca-cert certs/ca_cert.pem \
+    --ca-key certs/ca_key.pem \
+    --cn server.local \
+    --out certs/server \
+    --days 365
+
+# Step 3: Generate new client certificate (signed by CA)
+python3 scripts/gen_cert.py \
+    --ca-cert certs/ca_cert.pem \
+    --ca-key certs/ca_key.pem \
+    --cn client.local \
+    --out certs/client \
+    --days 365
+```
+
+**Expected Output:**
+```
+[*] Generating 2048-bit RSA private key...
+[*] Creating self-signed certificate...
+[*] Writing certificate to certs/ca_cert.pem...
+[*] Writing private key to certs/ca_key.pem...
+[+] Root CA created successfully!
+    Certificate: certs/ca_cert.pem
+    Private Key: certs/ca_key.pem
+    Valid for 3650 days
+
+[*] Loading CA certificate and key...
+[*] Generating 2048-bit RSA private key...
+[*] Creating certificate for CN=server.local...
+[*] Writing certificate to certs/server_cert.pem...
+[*] Writing private key to certs/server_key.pem...
+[+] Certificate issued successfully!
+    Certificate: certs/server_cert.pem
+    Private Key: certs/server_key.pem
+    Valid for 365 days
+
+[*] Loading CA certificate and key...
+[*] Generating 2048-bit RSA private key...
+[*] Creating certificate for CN=client.local...
+[*] Writing certificate to certs/client_cert.pem...
+[*] Writing private key to certs/client_key.pem...
+[+] Certificate issued successfully!
+    Certificate: certs/client_cert.pem
+    Private Key: certs/client_key.pem
+    Valid for 365 days
 ```
 
 ---

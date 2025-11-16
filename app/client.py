@@ -303,9 +303,10 @@ class SecureClient:
             # Generate salt (server will store this and use it for verification)
             salt_bytes = os.urandom(16)
             salt = utils.b64e(salt_bytes)
-            # Compute hash: SHA256(salt_bytes + password_bytes)
+            # Compute hash: base64(SHA256(salt_bytes + password_bytes))
             # This matches what server will compute during login verification
-            pwd_hash = utils.sha256_hex(salt_bytes + password.encode('utf-8'))
+            pwd_hash_bytes = utils.sha256_bytes(salt_bytes + password.encode('utf-8'))
+            pwd_hash = utils.b64e(pwd_hash_bytes)
             
             # Create register message
             reg_msg = protocol.RegisterMessage(

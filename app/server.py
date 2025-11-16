@@ -294,15 +294,17 @@ class ClientSession:
             self.client_email = reg_msg.email
             self.client_username = reg_msg.username
             
-            # Decode salt from base64
+            # Decode salt and password hash from base64
             salt_bytes = utils.b64d(reg_msg.salt)
+            pwd_hash_bytes = utils.b64d(reg_msg.pwd)
+            pwd_hash_hex = pwd_hash_bytes.hex()  # Convert to hex for storage
             
             # Register user in database with pre-hashed password
             try:
                 db.register_user(
                     email=reg_msg.email,
                     username=reg_msg.username,
-                    pwd_hash=reg_msg.pwd,
+                    pwd_hash=pwd_hash_hex,
                     salt=salt_bytes
                 )
                 logger.info(f"[{self.session_id}] User registered: {reg_msg.email}")
