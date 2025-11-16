@@ -527,6 +527,13 @@ class ClientSession:
             )
             
             logger.info(f"[{self.session_id}] Sending SessionReceipt: {first_seqno}-{last_seqno}")
+            
+            # Save server receipt to file for evidence
+            receipt_file = Path("transcripts") / f"server_receipt_{self.session_id}.json"
+            with open(receipt_file, 'w') as f:
+                json.dump(receipt.dict(), f, indent=2)
+            logger.info(f"[Evidence] Saved server receipt to {receipt_file}")
+            
             return self.send_message(receipt)
             
         except Exception as e:
@@ -730,6 +737,12 @@ class ClientSession:
                         
                 elif isinstance(msg, protocol.SessionReceipt):
                     logger.info(f"[{self.session_id}] Client requesting session receipt")
+                    
+                    # Save received client receipt to file for evidence
+                    receipt_file = Path("transcripts") / f"client_receipt_{self.session_id}.json"
+                    with open(receipt_file, 'w') as f:
+                        json.dump(msg.dict(), f, indent=2)
+                    logger.info(f"[Evidence] Saved client receipt to {receipt_file}")
                     break
                 else:
                     logger.warning(f"[{self.session_id}] Unexpected message type: {msg.type}")

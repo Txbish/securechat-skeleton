@@ -523,6 +523,12 @@ class SecureClient:
                     logger.info(f"  Messages: {msg.first_seq}-{msg.last_seq}")
                     logger.info(f"  Transcript hash: {msg.transcript_sha256}")
                     logger.info(f"  Signature (b64): {msg.sig[:32]}...")
+                    
+                    # Save received receipt to file for non-repudiation evidence
+                    receipt_file = Path("transcripts") / "server_receipt.json"
+                    with open(receipt_file, 'w') as f:
+                        json.dump(msg.dict(), f, indent=2)
+                    logger.info(f"[Evidence] Saved server receipt to {receipt_file}")
                 else:
                     logger.info(f"[{msg.type}] {msg}")
         
@@ -559,6 +565,12 @@ class SecureClient:
                         )
                         logger.info(f"Sending client receipt: {self.first_seqno}-{self.last_seqno}")
                         self.send_message(client_receipt)
+                        
+                        # Save client receipt to file for evidence
+                        receipt_file = Path("transcripts") / "client_receipt.json"
+                        with open(receipt_file, 'w') as f:
+                            json.dump(client_receipt.dict(), f, indent=2)
+                        logger.info(f"[Evidence] Saved client receipt to {receipt_file}")
                     
                     break
                 

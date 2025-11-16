@@ -1,5 +1,5 @@
 cryptography
-PyMySQL
+psycopg2-binary
 python-dotenv
 pydantic
 rich
